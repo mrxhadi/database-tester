@@ -34,40 +34,10 @@ def save_database(data):
 
 song_database = load_database()
 
-# 📌 **دریافت و ذخیره `songs.json` از کاربر (با `getFile`)**
-async def handle_document(document, chat_id):
-    file_id = document["file_id"]
-
-    async with httpx.AsyncClient() as client:
-        response = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
-        file_data = response.json()
-
-        if file_data.get("ok"):
-            file_path = file_data["result"]["file_path"]
-            file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-
-            file_response = await client.get(file_url)
-            with open(JSON_FILE, "wb") as file:
-                file.write(file_response.content)
-
-            global song_database
-            song_database = load_database()
-            await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
-        else:
-            await send_message(chat_id, "❌ خطا در دریافت فایل!")
-
 # 📌 **ارسال پیام به تلگرام**
 async def send_message(chat_id, text):
     async with httpx.AsyncClient() as client:
         await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
-
-# 📌 **ارسال فایل `songs.json` در `/list`**
-async def send_song_list(chat_id):
-    save_database(song_database)
-    async with httpx.AsyncClient() as client:
-        with open(JSON_FILE, "rb") as file:
-            files = {"document": file}
-            await client.post(f"{BASE_URL}/sendDocument", params={"chat_id": chat_id}, files=files)
 
 # 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
 async def send_random_songs(chat_id):
@@ -82,8 +52,7 @@ async def send_random_songs(chat_id):
             await client.get(f"{BASE_URL}/copyMessage", params={
                 "chat_id": chat_id,
                 "from_chat_id": GROUP_ID,
-                "message_id": song["message_id"],
-                "message_thread_id": song["thread_id"]
+                "message_id": song["message_id"]
             })
 
 # 📌 **چک کردن پیام‌های جدید و مدیریت دستورات**
@@ -102,14 +71,9 @@ async def check_new_messages():
                             message = update["message"]
                             chat_id = message["chat"]["id"]
 
-                            if "document" in message:
-                                await handle_document(message["document"], chat_id)
-
-                            elif "text" in message:
+                            if "text" in message:
                                 text = message["text"].strip()
-                                if text == "/list":
-                                    await send_song_list(chat_id)
-                                elif text == "/random":
+                                if text == "/random":
                                     await send_random_songs(chat_id)
 
         except Exception as e:
