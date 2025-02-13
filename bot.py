@@ -41,6 +41,7 @@ async def send_message(chat_id, text):
 
 # 📌 **دریافت و ذخیره `songs.json` از کاربر**
 async def handle_document(document, chat_id):
+    global song_database  # 📌 مقدار `song_database` را بعد از آپدیت تغییر بده
     file_id = document["file_id"]  # گرفتن file_id
     async with httpx.AsyncClient() as client:
         file_info = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
@@ -57,13 +58,14 @@ async def handle_document(document, chat_id):
         with open(JSON_FILE, "wb") as file:
             file.write(response.content)
 
-    global song_database
-    song_database = load_database()
+    song_database = load_database()  # 📌 دیتابیس را مجدد بارگذاری کن
 
     await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
 
 # 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
 async def send_random_songs(chat_id):
+    global song_database  # 📌 اینجا هم مقدار دیتابیس را بررسی کن
+
     if not song_database:
         await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
         return
