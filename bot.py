@@ -39,10 +39,29 @@ async def send_message(chat_id, text):
     async with httpx.AsyncClient() as client:
         await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
 
+# 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
+async def send_random_songs(chat_id):
+    global song_database  # 📌 دیتابیس را بررسی کن
+
+    if not song_database:
+        await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
+        return
+
+    random_songs = random.sample(song_database, min(3, len(song_database)))
+
+    async with httpx.AsyncClient() as client:
+        for song in random_songs:
+            await client.get(f"{BASE_URL}/copyMessage", params={
+                "chat_id": chat_id,
+                "from_chat_id": GROUP_ID,
+                "message_id": song["message_id"],
+                "message_thread_id": song["thread_id"]  
+            })
+
 # 📌 **دریافت و ذخیره `songs.json` از کاربر**
 async def handle_document(document, chat_id):
-    global song_database  # 📌 مقدار `song_database` را بعد از آپدیت تغییر بده
-    file_id = document["file_id"]  # گرفتن file_id
+    global song_database  
+    file_id = document["file_id"]  
     async with httpx.AsyncClient() as client:
         file_info = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
         file_info_data = file_info.json()
@@ -58,27 +77,9 @@ async def handle_document(document, chat_id):
         with open(JSON_FILE, "wb") as file:
             file.write(response.content)
 
-    song_database = load_database()  # 📌 دیتابیس را مجدد بارگذاری کن
+    song_database = load_database()  
 
     await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
-
-# 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
-async def send_random_songs(chat_id):
-    global song_database  # 📌 اینجا هم مقدار دیتابیس را بررسی کن
-
-    if not song_database:
-        await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
-        return
-
-    random_songs = random.sample(song_database, min(3, len(song_database)))
-
-    async with httpx.AsyncClient() as client:
-        for song in random_songs:
-            await client.get(f"{BASE_URL}/copyMessage", params={
-                "chat_id": chat_id,
-                "from_chat_id": GROUP_ID,
-                "message_id": song["message_id"]
-            })
 
 # 📌 **چک کردن پیام‌های جدید و مدیریت دستورات**
 async def check_new_messages():
