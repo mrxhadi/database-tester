@@ -5,19 +5,15 @@ import asyncio
 import httpx
 from datetime import datetime
 import pytz
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ContentType
-from aiogram.utils import executor
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 GROUP_ID = os.getenv("GROUP_ID")
 JSON_FILE = "songs.json"
+BASE_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 if not BOT_TOKEN or not GROUP_ID:
     raise ValueError("❌ متغیرهای محیطی BOT_TOKEN و GROUP_ID تنظیم نشده‌اند!")
 
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
 IRAN_TZ = pytz.timezone("Asia/Tehran")
 
 EXCLUDED_TOPICS_RANDOM = ["Nostalgic", "Golchin-e Shad-e Irooni"]
@@ -48,31 +44,32 @@ def is_duplicate_song(audio, thread_id):
             return True
     return False
 
-# 📌 **دریافت و ذخیره `songs.json` از کاربر**
-@dp.message_handler(content_types=ContentType.DOCUMENT)
-async def handle_document(message: types.Message):
-    document = message.document
-    if document.file_name == "songs.json":
-        file_path = await bot.get_file(document.file_id)
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path.file_path}"
-
-        async with httpx.AsyncClient() as client:
-            response = await client.get(file_url)
-            with open(JSON_FILE, "wb") as file:
-                file.write(response.content)
-
-        global song_database
-        song_database = load_database()
-        await message.reply("✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
-
-# 📌 **ارسال فایل `songs.json` با `/list`**
-@dp.message_handler(commands=['list'])
-async def send_song_list(message: types.Message):
+# 📌 **ارسال فایل `songs.json` در `/list`**
+async def send_song_list(chat_id):
     save_database(song_database)
-    if os.path.exists(JSON_FILE):
-        await message.reply_document(open(JSON_FILE, "rb"))
-    else:
-        await message.reply("❌ دیتابیس آهنگ‌ها خالی است!")
+    async with httpx.AsyncClient() as client:
+        with open(JSON_FILE, "rb") as file:
+            files = {"document": file}
+            await client.post(f"{BASE_URL}/sendDocument", params={"chat_id": chat_id}, files=files)
+
+# 📌 **دریافت و ذخیره `songs.json` از کاربر**
+async def handle_document(document, chat_id):
+    file_path = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{document['file_path']}"
+    
+    async with httpx.AsyncClient() as client:
+        response = await client.get(file_path)
+        with open(JSON_FILE, "wb") as file:
+            file.write(response.content)
+
+    global song_database
+    song_database = load_database()
+
+    await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
+
+# 📌 **ارسال پیام به تلگرام**
+async def send_message(chat_id, text):
+    async with httpx.AsyncClient() as client:
+        await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
 
 # 📌 **فوروارد آهنگ‌های جدید بدون کپشن و حذف پیام اصلی**
 async def forward_music_without_caption(message, thread_id):
@@ -83,7 +80,7 @@ async def forward_music_without_caption(message, thread_id):
     audio = message["audio"]
 
     if is_duplicate_song(audio, thread_id):
-        async with httpx.AsyncClient(timeout=20) as client:
+        async with httpx.AsyncClient() as client:
             await client.get(f"{BASE_URL}/deleteMessage", params={
                 "chat_id": GROUP_ID,
                 "message_id": message_id
@@ -94,7 +91,7 @@ async def forward_music_without_caption(message, thread_id):
     audio_title = audio.get("title", "نامشخص").lower()
     audio_performer = audio.get("performer", "نامشخص").lower()
 
-    async with httpx.AsyncClient(timeout=20) as client:
+    async with httpx.AsyncClient() as client:
         forward_response = await client.get(f"{BASE_URL}/sendAudio", params={
             "chat_id": GROUP_ID,
             "audio": audio_file_id,
@@ -121,10 +118,9 @@ async def forward_music_without_caption(message, thread_id):
             })
 
 # 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
-@dp.message_handler(commands=['random'])
-async def send_random_songs(message: types.Message):
+async def send_random_songs(chat_id):
     if not song_database:
-        await message.reply("⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
+        await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
         return
 
     random_songs = random.sample(song_database, min(3, len(song_database)))
@@ -132,7 +128,7 @@ async def send_random_songs(message: types.Message):
     async with httpx.AsyncClient() as client:
         for song in random_songs:
             await client.get(f"{BASE_URL}/copyMessage", params={
-                "chat_id": message.chat.id,
+                "chat_id": chat_id,
                 "from_chat_id": GROUP_ID,
                 "message_id": song["message_id"],
                 "message_thread_id": song["thread_id"]
@@ -143,7 +139,7 @@ async def check_new_messages():
     last_update_id = None
     while True:
         try:
-            async with httpx.AsyncClient(timeout=20) as client:
+            async with httpx.AsyncClient() as client:
                 response = await client.get(f"{BASE_URL}/getUpdates", params={"offset": last_update_id})
                 data = response.json()
 
@@ -155,7 +151,17 @@ async def check_new_messages():
                             chat_id = message["chat"]["id"]
                             thread_id = message.get("message_thread_id")
 
-                            if "audio" in message and str(chat_id) == GROUP_ID:
+                            if "document" in message:
+                                await handle_document(message["document"], chat_id)
+
+                            elif "text" in message:
+                                text = message["text"].strip()
+                                if text == "/list":
+                                    await send_song_list(chat_id)
+                                elif text == "/random":
+                                    await send_random_songs(chat_id)
+
+                            elif "audio" in message and str(chat_id) == GROUP_ID:
                                 await forward_music_without_caption(message, thread_id)
 
         except Exception as e:
@@ -166,8 +172,8 @@ async def check_new_messages():
 
 # 📌 **اجرای ربات**
 async def main():
-    await bot.send_message(GROUP_ID, "🔥 I'm Ready, brothers!")
+    await send_message(GROUP_ID, "🔥 I'm Ready, brothers!")
     await asyncio.gather(check_new_messages())
 
 if __name__ == "__main__":
-    executor.start_polling(dp, skip_updates=True)
+    asyncio.run(main())
