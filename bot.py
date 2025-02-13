@@ -37,13 +37,40 @@ song_database = load_database()
 # 📌 **ارسال پیام به تلگرام**
 async def send_message(chat_id, text):
     async with httpx.AsyncClient() as client:
+        print(f"📤 ارسال پیام به {chat_id}: {text}")
         await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
+
+# 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
+async def send_random_songs(chat_id):
+    global song_database  
+    print(f"🔍 دریافت دستور /random از {chat_id}")
+
+    if not song_database:
+        print("⚠️ دیتابیس خالی است!")
+        await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
+        return
+
+    print(f"🎶 تعداد آهنگ‌های موجود در دیتابیس: {len(song_database)}")
+    random.shuffle(song_database)
+    valid_songs = random.sample(song_database, min(RANDOM_SONG_COUNT, len(song_database)))
+
+    async with httpx.AsyncClient() as client:
+        for song in valid_songs:
+            print(f"📤 ارسال آهنگ {song['message_id']} از تاپیک {song['thread_id']}")
+            response = await client.get(f"{BASE_URL}/copyMessage", params={
+                "chat_id": chat_id,
+                "from_chat_id": GROUP_ID,
+                "message_id": song["message_id"],
+                "message_thread_id": song["thread_id"]  
+            })
+            print(f"✅ نتیجه ارسال: {response.json()}")
 
 # 📌 **دریافت و ذخیره `songs.json` از کاربر**
 async def handle_document(document, chat_id):
     global song_database  
-    file_id = document["file_id"]  
+    print(f"📥 دریافت فایل {document['file_name']} از {chat_id}")
 
+    file_id = document["file_id"]  
     async with httpx.AsyncClient() as client:
         file_info = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
         file_info_data = file_info.json()
@@ -61,6 +88,7 @@ async def handle_document(document, chat_id):
 
     song_database = load_database()  
 
+    print(f"✅ دیتابیس با {len(song_database)} آهنگ آپدیت شد!")
     await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
 
 # 📌 **چک کردن پیام‌های جدید و مدیریت دستورات**
@@ -88,11 +116,12 @@ async def check_new_messages():
                             # 📌 **بررسی دستورات متنی**
                             elif "text" in message:
                                 text = message["text"].strip()
+                                print(f"📩 دریافت پیام متنی: {text}")
                                 if text == "/random":
                                     await send_random_songs(chat_id)
 
         except Exception as e:
-            print(f"⚠️ خطا: {e}")
+            print(f"⚠️ خطا در `check_new_messages()`: {e}")
             await asyncio.sleep(5)
 
         await asyncio.sleep(3)
