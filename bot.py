@@ -39,82 +39,65 @@ async def send_message(chat_id, text):
     async with httpx.AsyncClient() as client:
         await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
 
+# 📌 **حذف آهنگ‌های خراب از دیتابیس**
+def remove_invalid_songs():
+    global song_database
+    valid_songs = []
+    for song in song_database:
+        if song.get("message_id") and song.get("thread_id"):
+            valid_songs.append(song)
+    song_database = valid_songs
+    save_database(song_database)
+
+# 📌 **بررسی دسترسی به پیام قبل از فوروارد**
+async def can_forward_message(song):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(f"{BASE_URL}/copyMessage", params={
+            "chat_id": GROUP_ID,
+            "from_chat_id": GROUP_ID,
+            "message_id": song["message_id"],
+            "message_thread_id": song["thread_id"]
+        })
+        data = response.json()
+        if not data.get("ok"):  # پیام مشکل داره
+            return False
+        return True
+
 # 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
 async def send_random_songs(chat_id):
-    global song_database  # 📌 دیتابیس را بررسی کن
-
+    global song_database  
     if not song_database:
         await send_message(chat_id, "⚠️ هیچ آهنگی در دیتابیس پیدا نشد!")
         return
 
-    random_songs = random.sample(song_database, min(3, len(song_database)))
+    random.shuffle(song_database)
+    valid_songs = []
 
     async with httpx.AsyncClient() as client:
-        for song in random_songs:
+        for song in song_database:
+            if await can_forward_message(song):
+                valid_songs.append(song)
+            else:
+                print(f"❌ حذف پیام غیرقابل فوروارد: {song['message_id']}")
+                song_database.remove(song)
+
+            if len(valid_songs) >= RANDOM_SONG_COUNT:
+                break
+
+        save_database(song_database)  # ذخیره دیتابیس بعد از حذف پیام‌های خراب
+
+        for song in valid_songs:
             await client.get(f"{BASE_URL}/copyMessage", params={
                 "chat_id": chat_id,
                 "from_chat_id": GROUP_ID,
                 "message_id": song["message_id"],
-                "message_thread_id": song["thread_id"]  
+                "message_thread_id": song["thread_id"]
             })
-
-# 📌 **دریافت و ذخیره `songs.json` از کاربر**
-async def handle_document(document, chat_id):
-    global song_database  
-    file_id = document["file_id"]  
-    async with httpx.AsyncClient() as client:
-        file_info = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
-        file_info_data = file_info.json()
-
-        if not file_info_data.get("ok"):
-            await send_message(chat_id, "❌ خطا در دریافت فایل از سرور تلگرام!")
-            return
-
-        file_path = file_info_data["result"]["file_path"]
-        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
-
-        response = await client.get(file_url)
-        with open(JSON_FILE, "wb") as file:
-            file.write(response.content)
-
-    song_database = load_database()  
-
-    await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
-
-# 📌 **چک کردن پیام‌های جدید و مدیریت دستورات**
-async def check_new_messages():
-    last_update_id = None
-    while True:
-        try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(f"{BASE_URL}/getUpdates", params={"offset": last_update_id})
-                data = response.json()
-
-                if data.get("ok"):
-                    for update in data["result"]:
-                        last_update_id = update["update_id"] + 1
-                        if "message" in update:
-                            message = update["message"]
-                            chat_id = message["chat"]["id"]
-
-                            if "document" in message and message["document"]["file_name"] == "songs.json":
-                                await handle_document(message["document"], chat_id)
-
-                            elif "text" in message:
-                                text = message["text"].strip()
-                                if text == "/random":
-                                    await send_random_songs(chat_id)
-
-        except Exception as e:
-            print(f"⚠️ خطا: {e}")
-            await asyncio.sleep(5)
-
-        await asyncio.sleep(3)
 
 # 📌 **اجرای ربات**
 async def main():
     await send_message(GROUP_ID, "🔥 I'm Ready, brothers!")
-    await asyncio.gather(check_new_messages())
+    await asyncio.gather(send_random_songs(GROUP_ID))
 
 if __name__ == "__main__":
     asyncio.run(main())
