@@ -39,6 +39,29 @@ async def send_message(chat_id, text):
     async with httpx.AsyncClient() as client:
         await client.get(f"{BASE_URL}/sendMessage", params={"chat_id": chat_id, "text": text})
 
+# 📌 **دریافت و ذخیره `songs.json` از کاربر**
+async def handle_document(document, chat_id):
+    file_id = document["file_id"]  # گرفتن file_id
+    async with httpx.AsyncClient() as client:
+        file_info = await client.get(f"{BASE_URL}/getFile", params={"file_id": file_id})
+        file_info_data = file_info.json()
+
+        if not file_info_data.get("ok"):
+            await send_message(chat_id, "❌ خطا در دریافت فایل از سرور تلگرام!")
+            return
+
+        file_path = file_info_data["result"]["file_path"]
+        file_url = f"https://api.telegram.org/file/bot{BOT_TOKEN}/{file_path}"
+
+        response = await client.get(file_url)
+        with open(JSON_FILE, "wb") as file:
+            file.write(response.content)
+
+    global song_database
+    song_database = load_database()
+
+    await send_message(chat_id, "✅ دیتابیس آپدیت شد و آهنگ‌های جدید اضافه شدند!")
+
 # 📌 **ارسال ۳ آهنگ تصادفی با `/random`**
 async def send_random_songs(chat_id):
     if not song_database:
@@ -71,7 +94,10 @@ async def check_new_messages():
                             message = update["message"]
                             chat_id = message["chat"]["id"]
 
-                            if "text" in message:
+                            if "document" in message and message["document"]["file_name"] == "songs.json":
+                                await handle_document(message["document"], chat_id)
+
+                            elif "text" in message:
                                 text = message["text"].strip()
                                 if text == "/random":
                                     await send_random_songs(chat_id)
